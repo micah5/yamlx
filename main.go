@@ -8,69 +8,98 @@ import (
 type LineType int
 
 const (
-	LineTypeUnknown LineType = iota
-	LineTypeKeyValue
+	LineTypeKeyValue LineType = iota
 	LineTypeKey
 	LineTypeListElement
 )
+
+type Anchor struct {
+	Name  string
+	Lines []*Line
+}
 
 type Line struct {
 	Type            LineType
 	Indent          int
 	ProcessedString string
+	Anchor          *Anchor
 }
 
-func NewLine(line string) *Line {
-	// get the indent
-	indent := 0
+// NewLine creates and initializes a new Line based on the input string.
+func NewLine(line string) (*Line, error) {
+	l := &Line{}
+	if err := l.parseIndent(line); err != nil {
+		return nil, err
+	}
+	if err := l.parseType(line); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+// parseIndent parses the indentation of a line.
+func (l *Line) parseIndent(line string) error {
 	for _, char := range line {
 		if string(char) == "\t" {
-			indent++
+			l.Indent++
 		} else {
 			break
 		}
 	}
-
-	// determine the line type
-	var lineType LineType
-	trimmed := strings.TrimSpace(line)
-	if strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, " ") {
-		lineType = LineTypeKey
-	} else if strings.HasPrefix(trimmed, "- ") {
-		lineType = LineTypeListElement
-		trimmed = strings.TrimPrefix(trimmed, "- ")
-	} else if strings.Contains(trimmed, ":") {
-		lineType = LineTypeKeyValue
-	} else {
-		lineType = LineTypeUnknown
-	}
-
-	return &Line{
-		Type:            lineType,
-		Indent:          indent,
-		ProcessedString: trimmed,
-	}
+	return nil
 }
 
-type Lines []*Line
+// parseType determines the type of the line and parses it accordingly.
+func (l *Line) parseType(line string) error {
+	trimmed := strings.TrimSpace(line)
 
-func Parse(data string) (any, error) {
-	lines := make(Lines, 0)
+	// Check for anchor in the line
+	start := strings.Index(trimmed, "&")
+	if start != -1 {
+		end := strings.Index(trimmed[start:], " ")
+		if end == -1 {
+			end = len(trimmed)
+		} else {
+			end += start
+		}
+		anchorName := trimmed[start+1 : end]
+		l.Anchor = &Anchor{Name: anchorName}
+		trimmed = strings.Replace(trimmed, " &"+anchorName, "", 1)
+	}
+
+	// Determine line type and parse accordingly
+	switch {
+	case strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, " "):
+		l.Type = LineTypeKey
+		trimmed = strings.TrimSuffix(trimmed, ":")
+	case strings.HasPrefix(trimmed, "- "):
+		l.Type = LineTypeListElement
+		trimmed = strings.TrimPrefix(trimmed, "- ")
+	case strings.Contains(trimmed, ":"):
+		l.Type = LineTypeKeyValue
+	default:
+		return fmt.Errorf("unknown line type: %s", line)
+	}
+
+	l.ProcessedString = trimmed
+	return nil
+}
+
+func Parse(data string) ([]*Line, error) {
+	var lines []*Line
 	rawLines := strings.Split(data, "\n")
 
-	// parse the lines
 	for _, rawLine := range rawLines {
 		if rawLine == "" {
 			continue
 		}
 
-		parsedLine := NewLine(rawLine)
-		if parsedLine.Type == LineTypeUnknown {
-			return nil, fmt.Errorf("invalid line: %s", rawLine)
+		parsedLine, err := NewLine(rawLine)
+		if err != nil {
+			return nil, err
 		}
 		lines = append(lines, parsedLine)
 	}
 
-	// TODO: Implement further logic to parse the lines into a structured YAML representation
 	return lines, nil
 }
