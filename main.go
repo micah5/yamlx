@@ -20,11 +20,20 @@ type Line struct {
 	ProcessedString string
 }
 
-func NewLine(line, indentationType string) *Line {
-	indent := getIndent(line, indentationType)
-	trimmed := strings.TrimSpace(line)
+func NewLine(line string) *Line {
+	// get the indent
+	indent := 0
+	for _, char := range line {
+		if string(char) == "\t" {
+			indent++
+		} else {
+			break
+		}
+	}
 
+	// determine the line type
 	var lineType LineType
+	trimmed := strings.TrimSpace(line)
 	if strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, " ") {
 		lineType = LineTypeKey
 	} else if strings.HasPrefix(trimmed, "- ") {
@@ -43,56 +52,11 @@ func NewLine(line, indentationType string) *Line {
 	}
 }
 
-func getIndent(s, indentationType string) int {
-	indent := 0
-	for _, char := range s {
-		if string(char) == indentationType {
-			indent++
-		} else {
-			break
-		}
-	}
-	return indent
-}
-
 type Lines []*Line
-
-func getIndentationType(rawLines []string) (string, error) {
-	// find the type of indentation used
-	var indentationType string
-	for _, rawLine := range rawLines {
-		if strings.Contains(rawLine, "\t") {
-			indentationType = "\t"
-			break
-		}
-		// check for spaces
-		for i := 1; i < 8; i++ {
-			_indentationType := strings.Repeat(" ", i)
-			if strings.HasPrefix(rawLine, _indentationType) {
-				indentationType = _indentationType
-				break
-			}
-		}
-	}
-
-	// check that all lines use the same indentation type
-	for _, rawLine := range rawLines {
-		if !strings.HasPrefix(rawLine, indentationType) {
-			return "", fmt.Errorf("inconsistent indentation")
-		}
-	}
-	return indentationType, nil
-}
 
 func Parse(data string) (any, error) {
 	lines := make(Lines, 0)
 	rawLines := strings.Split(data, "\n")
-
-	// find the type of indentation used
-	indentationType, err := getIndentationType(rawLines)
-	if err != nil {
-		return nil, err
-	}
 
 	// parse the lines
 	for _, rawLine := range rawLines {
@@ -100,7 +64,7 @@ func Parse(data string) (any, error) {
 			continue
 		}
 
-		parsedLine := NewLine(rawLine, indentationType)
+		parsedLine := NewLine(rawLine)
 		if parsedLine.Type == LineTypeUnknown {
 			return nil, fmt.Errorf("invalid line: %s", rawLine)
 		}
