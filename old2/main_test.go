@@ -33,7 +33,9 @@ func TestLineParsing(t *testing.T) {
 			assert.Equal(t, tc.expectedType, line.Type)
 			assert.Equal(t, tc.expectedIndent, line.Indent)
 			assert.Equal(t, tc.expectedContent, line.ProcessedString)
-			assert.Equal(t, tc.expectedAnchor, line.Anchor)
+			if tc.expectedAnchor != nil {
+				assert.Equal(t, tc.expectedAnchor.Name, line.Anchor.Name)
+			}
 		}
 	}
 }

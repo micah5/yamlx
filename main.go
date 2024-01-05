@@ -2,104 +2,84 @@ package yamlx
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
-type LineType int
-
-const (
-	LineTypeKeyValue LineType = iota
-	LineTypeKey
-	LineTypeListElement
-)
-
-type Anchor struct {
-	Name  string
-	Lines []*Line
+type Pair struct {
+	Key   string
+	Value any
 }
 
-type Line struct {
-	Type            LineType
-	Indent          int
-	ProcessedString string
-	Anchor          *Anchor
+func NewPair(key string, value any) *Pair {
+	return &Pair{key, value}
 }
 
-// NewLine creates and initializes a new Line based on the input string.
-func NewLine(line string) (*Line, error) {
-	l := &Line{}
-	if err := l.parseIndent(line); err != nil {
-		return nil, err
-	}
-	if err := l.parseType(line); err != nil {
-		return nil, err
-	}
-	return l, nil
+func Parse(data string) {
+	lines := strings.Split(data, "\n")
+	processLines(lines, 0)
 }
 
-// parseIndent parses the indentation of a line.
-func (l *Line) parseIndent(line string) error {
-	for _, char := range line {
-		if string(char) == "\t" {
-			l.Indent++
-		} else {
-			break
-		}
-	}
-	return nil
-}
-
-// parseType determines the type of the line and parses it accordingly.
-func (l *Line) parseType(line string) error {
-	trimmed := strings.TrimSpace(line)
-
-	// Check for anchor in the line
-	start := strings.Index(trimmed, "&")
-	if start != -1 {
-		end := strings.Index(trimmed[start:], " ")
-		if end == -1 {
-			end = len(trimmed)
-		} else {
-			end += start
-		}
-		anchorName := trimmed[start+1 : end]
-		l.Anchor = &Anchor{Name: anchorName}
-		trimmed = strings.Replace(trimmed, " &"+anchorName, "", 1)
+// Recursive function to process lines
+func processLines(lines []string, currentLevel int) {
+	if len(lines) == 0 {
+		return
 	}
 
-	// Determine line type and parse accordingly
-	switch {
-	case strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, " "):
-		l.Type = LineTypeKey
-		trimmed = strings.TrimSuffix(trimmed, ":")
-	case strings.HasPrefix(trimmed, "- "):
-		l.Type = LineTypeListElement
-		trimmed = strings.TrimPrefix(trimmed, "- ")
-	case strings.Contains(trimmed, ":"):
-		l.Type = LineTypeKeyValue
-	default:
-		return fmt.Errorf("unknown line type: %s", line)
-	}
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		lineLevel := strings.Count(line, "\t")
 
-	l.ProcessedString = trimmed
-	return nil
-}
-
-func Parse(data string) ([]*Line, error) {
-	var lines []*Line
-	rawLines := strings.Split(data, "\n")
-
-	for _, rawLine := range rawLines {
-		if rawLine == "" {
+		// Skip empty lines
+		if line == "" {
 			continue
 		}
 
-		parsedLine, err := NewLine(rawLine)
-		if err != nil {
-			return nil, err
+		// Check if line is at the current level
+		if lineLevel == currentLevel {
+			if i < len(lines)-1 && strings.Count(lines[i+1], "\t") > lineLevel {
+				// This line is a map, call recursively for nested lines
+				fmt.Println("(map)", line)
+				end := findEndOfBlock(lines, i+1, lineLevel)
+				processLines(lines[i+1:end], lineLevel+1)
+				i = end - 1 // Skip processed lines
+			} else {
+				// This line is a key/value pair
+				value := processValue(line)
+				fmt.Println("(k/v)", value)
+			}
 		}
-		lines = append(lines, parsedLine)
 	}
+}
 
-	return lines, nil
+func processValue(line string) any {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "- ") {
+		value := strings.TrimPrefix(trimmed, "- ")
+		return processValue(value)
+	} else if strings.Contains(trimmed, ":") {
+		split := strings.Split(trimmed, ":")
+		return NewPair(processValue(split[0]).(string), processValue(split[1]))
+	} else {
+		if intValue, err := strconv.ParseInt(trimmed, 10, 0); err == nil {
+			return int(intValue)
+		}
+		if floatValue, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			return floatValue
+		}
+		if boolValue, err := strconv.ParseBool(trimmed); err == nil {
+			return boolValue
+		}
+		return trimmed
+	}
+}
+
+// Helper function to find the end of the current block
+func findEndOfBlock(lines []string, start int, level int) int {
+	for i := start; i < len(lines); i++ {
+		if strings.Count(lines[i], "\t") <= level {
+			return i
+		}
+	}
+	return len(lines)
 }
