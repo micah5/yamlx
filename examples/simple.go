@@ -14,9 +14,15 @@ key2:
 		- value2_2_1
 		- &anchor2 value2_2_2
 		- key2_2_3: value2_2_3
+		- 1
+		- 1.1
+		- true
 	key2_3:
 		key2_3_1: value2_3_1
 		key2_3_2: *anchor2
+		int: 1
+		float: 1.2
+		bool: true
 key3: &anchor3 value3
 key4: &anchor4
 	- value4_1
