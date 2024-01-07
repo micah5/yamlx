@@ -1,182 +1,141 @@
-package yamlx
+package main
 
 import (
-	"encoding/json"
+	"bufio"
 	"fmt"
-	"reflect"
-	"strconv"
 	"strings"
 )
 
-type ListElement struct {
-	Value any
+// Token types
+const (
+	KEY = iota
+	VALUE
+	LIST_ITEM
+	ANCHOR
+	ALIAS
+	MERGE_KEY
+)
+
+// Token represents a lexical token.
+type Token struct {
+	Type     int
+	Literal  string
+	Children []Token // To hold nested tokens
 }
 
-func NewListElement(value any) ListElement {
-	return ListElement{value}
-}
-
-type Pair struct {
-	Key   string
-	Value any
-}
-
-func NewPair(key string, value any) Pair {
-	return Pair{key, value}
-}
-
-func Parse(data string) {
-	lines := strings.Split(data, "\n")
-	l := processLines(lines, 0, make(map[string]any))
-	l2 := processResults(l, "").(Pair).Value
-	jsonString, err := json.Marshal(l2)
-	if err != nil {
-		fmt.Println("Error converting to JSON:", err)
-		return
+func (t Token) String() string {
+	tokenTypes := []string{"KEY", "VALUE", "LIST_ITEM", "ANCHOR", "ALIAS", "MERGE_KEY"}
+	result := fmt.Sprintf("%s: %s", tokenTypes[t.Type], t.Literal)
+	for _, child := range t.Children {
+		result += "\n\t" + strings.ReplaceAll(child.String(), "\n", "\n\t")
 	}
-	fmt.Println(string(jsonString))
+	return result
 }
 
-// Recursive function to process lines
-func processLines(lines []string, currentLevel int, anchors map[string]any) []any {
-	if len(lines) == 0 {
-		return nil
+func (t Token) Print(prefix string) {
+	fmt.Println(prefix + t.String())
+	for _, child := range t.Children {
+		child.Print(prefix + "\t")
 	}
+}
 
-	values := make([]any, 0)
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		lineLevel := strings.Count(line, "\t")
+func Tokenize(input string, baseIndent int) []Token {
+	var tokens []Token
+	scanner := bufio.NewScanner(strings.NewReader(input))
+	var currentToken *Token
+	var nestedLines string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		currentIndent := countLeadingSpaces(line)
+		line = strings.TrimSpace(line)
 
 		// Skip empty lines
-		if line == "" {
+		if len(line) == 0 {
 			continue
 		}
 
-		// Extract anchors
-		anchor, newLine := extractAnchor(line, "&")
-		line = newLine
+		// Check if the line belongs to a nested structure
+		if currentToken != nil && currentIndent > baseIndent {
+			nestedLines += line + "\n"
+			continue
+		}
 
-		// Check if line is at the current level
-		if lineLevel == currentLevel {
-			if i < len(lines)-1 && strings.Count(lines[i+1], "\t") > lineLevel {
-				// This line is a map, call recursively for nested lines
-				end := findEndOfBlock(lines, i+1, lineLevel)
-				l := processLines(lines[i+1:end], lineLevel+1, anchors)
-				processedL := processResults(l, line)
-				values = addValue(values, processedL, anchor, anchors)
-				i = end - 1 // Skip processed lines
-			} else {
-				// This line is a key/value pair
-				value := processValue(line)
-				anchor2, _ := extractAnchor(line, "*")
-				if anchor2 != "" {
-					replaceValue := anchors[anchor2]
-					if replaceValue != nil {
-						switch reflect.TypeOf(value) {
-						case reflect.TypeOf(ListElement{}):
-							value = ListElement{replaceValue}
-						case reflect.TypeOf(Pair{}):
-							if reflect.TypeOf(replaceValue) == reflect.TypeOf(ListElement{}) {
-								replaceValue = replaceValue.(ListElement).Value
-							}
-							value = Pair{value.(Pair).Key, replaceValue}
-						}
-					}
-				}
-				values = addValue(values, value, anchor, anchors)
+		// Tokenize nested structure
+		if nestedLines != "" {
+			nestedTokens := Tokenize(nestedLines, baseIndent+1)
+			currentToken.Children = nestedTokens
+			nestedLines = ""
+		}
+
+		// Determine the token type based on the line
+		if strings.HasPrefix(line, "- ") {
+			tokens = append(tokens, Token{LIST_ITEM, strings.TrimSpace(line[2:]), nil})
+		} else if strings.HasPrefix(line, "<<: *") {
+			tokens = append(tokens, Token{MERGE_KEY, strings.TrimSpace(line[4:]), nil})
+		} else if strings.Contains(line, ": &") {
+			parts := strings.SplitN(line, ": &", 2)
+			currentToken = &Token{KEY, strings.TrimSpace(parts[0]), nil}
+			tokens = append(tokens, *currentToken)
+			tokens = append(tokens, Token{ANCHOR, strings.TrimSpace(parts[1]), nil})
+		} else if strings.Contains(line, ": *") {
+			parts := strings.SplitN(line, ": *", 2)
+			currentToken = &Token{KEY, strings.TrimSpace(parts[0]), nil}
+			tokens = append(tokens, *currentToken)
+			tokens = append(tokens, Token{ALIAS, strings.TrimSpace(parts[1]), nil})
+		} else if strings.Contains(line, ":") {
+			parts := strings.SplitN(line, ":", 2)
+			currentToken = &Token{KEY, strings.TrimSpace(parts[0]), nil}
+			tokens = append(tokens, *currentToken)
+			if len(parts) > 1 && len(strings.TrimSpace(parts[1])) > 0 {
+				tokens = append(tokens, Token{VALUE, strings.TrimSpace(parts[1]), nil})
 			}
 		}
 	}
-	fmt.Println(anchors)
-	return values
+
+	// Tokenize any remaining nested structure
+	if nestedLines != "" {
+		nestedTokens := Tokenize(nestedLines, baseIndent+1)
+		currentToken.Children = nestedTokens
+	}
+
+	return tokens
 }
 
-func addValue(values []any, value any, anchor string, anchors map[string]any) []any {
-	values = append(values, value)
-	if anchor != "" {
-		anchors[anchor] = value
-	}
-	return values
-}
-
-func processValue(line string) any {
-	trimmed := strings.TrimSpace(line)
-
-	// Check for list element
-	if strings.HasPrefix(trimmed, "- ") {
-		value := strings.TrimPrefix(trimmed, "- ")
-		return NewListElement(processValue(value))
-	}
-
-	// Check for key-value pair
-	if strings.Contains(trimmed, ":") {
-		split := strings.SplitN(trimmed, ":", 2)
-		return NewPair(strings.TrimSpace(split[0]), processValue(strings.TrimSpace(split[1])))
-	}
-
-	// Attempt to parse as int, float, bool, or return as string
-	if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-		return i
-	}
-	if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
-		return f
-	}
-	if b, err := strconv.ParseBool(trimmed); err == nil {
-		return b
-	}
-	return trimmed
-}
-
-func processResults(l []any, line string) any {
-	if len(l) > 0 {
-		key := strings.TrimSuffix(line, ":")
-		key = strings.TrimSpace(key)
-		switch reflect.TypeOf(l[0]) {
-		case reflect.TypeOf(ListElement{}):
-			value := make([]any, 0)
-			for _, v := range l {
-				listElementValue := v.(ListElement).Value
-				if reflect.TypeOf(listElementValue) == reflect.TypeOf(Pair{}) {
-					listElementValue = map[string]any{listElementValue.(Pair).Key: listElementValue.(Pair).Value}
-				}
-				value = append(value, listElementValue)
-			}
-			return Pair{key, value}
-		case reflect.TypeOf(Pair{}):
-			value := make(map[string]any)
-			for _, v := range l {
-				p := v.(Pair)
-				value[p.Key] = p.Value
-			}
-			return Pair{key, value}
-		}
-	}
-	return nil
-}
-
-func extractAnchor(line, prefix string) (string, string) {
-	start := strings.Index(line, prefix)
-	if start != -1 {
-		end := strings.Index(line[start:], " ")
-		if end == -1 {
-			end = len(line)
+// countLeadingSpaces counts the number of leading spaces in a string.
+func countLeadingSpaces(str string) int {
+	count := 0
+	for _, ch := range str {
+		if ch == ' ' {
+			count++
 		} else {
-			end += start
+			break
 		}
-		anchor := line[start+1 : end]
-		line = strings.Replace(line, prefix+anchor, "", 1)
-		return anchor, line
 	}
-	return "", line
+	return count
 }
 
-// Helper function to find the end of the current block
-func findEndOfBlock(lines []string, start int, level int) int {
-	for i := start; i < len(lines); i++ {
-		if strings.Count(lines[i], "\t") <= level {
-			return i
-		}
+func main() {
+	const yamlContent = `
+key1: value1
+key2: &key2
+  - list item 1
+  - list item 2
+key3:
+  key3_1: value3_1
+  key3_2: value3_2
+  key3_3:
+    key3_3_1: value3_3_1
+key4:
+  key4_1: &key4_1 value4_1
+  key4_2: *key4_1
+key5:
+  <<: *key2
+  key5_1: value5_1
+    `
+
+	tokens := Tokenize(yamlContent, 0)
+	for _, token := range tokens {
+		token.Print("")
 	}
-	return len(lines)
 }
