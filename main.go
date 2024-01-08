@@ -1,7 +1,9 @@
 package yamlx
 
 import (
+	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -145,6 +147,9 @@ func parseValue(literal string) any {
 	if b, err := strconv.ParseBool(literal); err == nil {
 		return b
 	}
+	if strings.HasPrefix(literal, "\"") && strings.HasSuffix(literal, "\"") {
+		return literal[1 : len(literal)-1]
+	}
 	return literal
 }
 
@@ -265,32 +270,100 @@ func Parse(tokens []*Token) (map[string]any, error) {
 	return result, nil
 }
 
-/*func main() {
-	const yamlContent = `
-key1: value1
-key2: &key2
-  - list item 1
-  - list item 2
-key3:
-  key3_1: &key3_1 value3_1
-  key3_2: value3_2
-  key3_3:
-    key3_3_1: value3_3_1
-key4:
-  key4_1: &key4_1 value4_1
-  key4_2: *key4_1
-key5:
-  <<: *key2
-  key5_1: value5_1
-    `
-
-	lines := strings.Split(yamlContent, "\n")
-	tokens := Tokenize(lines, 0)
-	for _, token := range tokens {
-		token.Print("")
+// Unmarshals YAMLX data into a Go struct
+func Unmarshal(data []byte, v interface{}) error {
+	lines := strings.Split(string(data), "\n")
+	tokens, err := Tokenize(lines, 0)
+	if err != nil {
+		return err
 	}
 
-	result, err := Parse(tokens)
-	fmt.Println(result, err)
+	parsedData, err := Parse(tokens)
+	if err != nil {
+		return err
+	}
+
+	return mapToStruct(parsedData, v)
 }
-*/
+
+// mapToStruct maps a generic map[string]any to a struct
+func mapToStruct(m map[string]any, s interface{}) error {
+	val := reflect.ValueOf(s)
+	if val.Kind() != reflect.Ptr || val.IsNil() {
+		return errors.New("yamlx: Unmarshal requires a non-nil pointer to a struct")
+	}
+
+	val = val.Elem()
+	if val.Kind() != reflect.Struct {
+		return errors.New("yamlx: Unmarshal requires a pointer to a struct")
+	}
+
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		tag := field.Tag.Get("yamlx")
+		if tag == "" {
+			tag = field.Name
+		}
+
+		value, ok := m[tag]
+		if !ok {
+			continue
+		}
+
+		fieldVal := val.Field(i)
+		if fieldVal.IsValid() && fieldVal.CanSet() {
+			setField(value, fieldVal)
+		}
+	}
+
+	return nil
+}
+
+// setField sets a field of a struct based on its type
+func setField(value any, fieldVal reflect.Value) {
+	if value == nil {
+		return
+	}
+
+	switch fieldVal.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if val, ok := value.(int64); ok {
+			fieldVal.SetInt(val)
+		}
+	case reflect.Float32, reflect.Float64:
+		if val, ok := value.(float64); ok {
+			fieldVal.SetFloat(val)
+		}
+	case reflect.String:
+		if val, ok := value.(string); ok {
+			fieldVal.SetString(val)
+		}
+	case reflect.Bool:
+		if val, ok := value.(bool); ok {
+			fieldVal.SetBool(val)
+		}
+	case reflect.Slice:
+		if val, ok := value.([]any); ok {
+			slice := reflect.MakeSlice(fieldVal.Type(), len(val), len(val))
+			for i := 0; i < len(val); i++ {
+				setField(val[i], slice.Index(i))
+			}
+			fieldVal.Set(slice)
+		}
+	case reflect.Map:
+		if val, ok := value.(map[string]any); ok {
+			m := reflect.MakeMap(fieldVal.Type())
+			for k, v := range val {
+				mapVal := reflect.New(fieldVal.Type().Elem()).Elem()
+				setField(v, mapVal)
+				m.SetMapIndex(reflect.ValueOf(k), mapVal)
+			}
+			fieldVal.Set(m)
+		}
+	case reflect.Struct:
+		if val, ok := value.(map[string]any); ok {
+			mapToStruct(val, fieldVal.Addr().Interface())
+		}
+	}
+}
