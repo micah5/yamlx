@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -17,15 +18,27 @@ const (
 	MERGE_KEY
 )
 
+type Tokens []*Token
+
+func (t Tokens) Find(typ Type) *Token {
+	for _, token := range t {
+		if token.Type == typ {
+			return token
+		}
+	}
+	return nil
+}
+
 // Token represents a lexical token.
 type Token struct {
-	Type     Type
-	Literal  string
-	Children []*Token // To hold nested tokens
+	Type        Type
+	Literal     string
+	Children    Tokens // To hold nested tokens
+	Attachments Tokens // To hold attachments
 }
 
 func NewToken(t Type, literal string) *Token {
-	return &Token{t, literal, nil}
+	return &Token{t, literal, nil, nil}
 }
 
 func (t Token) String() string {
@@ -36,9 +49,76 @@ func (t Token) String() string {
 
 func (t Token) Print(prefix string) {
 	fmt.Println(prefix + t.String())
+	for _, attachment := range t.Attachments {
+		attachment.Print(prefix + " ")
+	}
 	for _, child := range t.Children {
 		child.Print(prefix + "\t")
 	}
+}
+
+func (t Token) Parse(anchors map[string]any) (any, error) {
+	switch t.Type {
+	case KEY:
+		anchor := t.Attachments.Find(ANCHOR)
+		var returnValue any
+		var err error
+		if len(t.Children) > 0 {
+			if t.Children[0].Type == LIST_ITEM {
+				l := make([]any, len(t.Children))
+				for i, child := range t.Children {
+					l[i], err = child.Parse(anchors)
+				}
+				returnValue = l
+			} else {
+				m := make(map[string]any)
+				var value any
+				for _, child := range t.Children {
+					value, err = child.Parse(anchors)
+					if value != nil {
+						m[child.Literal] = value
+					}
+				}
+				returnValue = m
+			}
+		} else if len(t.Attachments) > 0 {
+			value := t.Attachments.Find(VALUE)
+			alias := t.Attachments.Find(ALIAS)
+			if value != nil {
+				returnValue = parseValue(value.Literal)
+			} else if alias != nil {
+				returnValue = anchors[alias.Literal]
+			} else {
+				return nil, fmt.Errorf("key has no value: %s", t)
+			}
+		}
+		if anchor != nil {
+			anchors[anchor.Literal] = returnValue
+		}
+		return returnValue, err
+	case VALUE:
+		return parseValue(t.Literal), nil
+	case LIST_ITEM:
+		return parseValue(t.Literal), nil
+	case MERGE_KEY:
+		return anchors[t.Literal], nil
+	default:
+		return nil, fmt.Errorf("unknown token type: %s", t)
+	}
+	return nil, nil
+}
+
+func parseValue(literal string) any {
+	if i, err := strconv.ParseInt(literal, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(literal, 64); err == nil {
+		return f
+	}
+	if b, err := strconv.ParseBool(literal); err == nil {
+		return b
+	}
+	return literal
 }
 
 func Tokenize(lines []string, currentLevel int) []*Token {
@@ -66,23 +146,36 @@ func Tokenize(lines []string, currentLevel int) []*Token {
 		if strings.HasPrefix(line, "- ") {
 			tokens = append(tokens, NewToken(LIST_ITEM, strings.TrimSpace(line[2:])))
 		} else if strings.HasPrefix(line, "<<: *") {
-			tokens = append(tokens, NewToken(MERGE_KEY, strings.TrimSpace(line[4:])))
+			parts := strings.SplitN(line, "<<: *", 2)
+			tokens = append(tokens, NewToken(MERGE_KEY, strings.TrimSpace(parts[1])))
 		} else if strings.Contains(line, ": &") {
 			parts := strings.SplitN(line, ": &", 2)
 			parentToken = NewToken(KEY, strings.TrimSpace(parts[0]))
 			tokens = append(tokens, parentToken)
-			tokens = append(tokens, NewToken(ANCHOR, strings.TrimSpace(parts[1])))
+			value := strings.TrimSpace(parts[1])
+			values := strings.Split(value, " ")
+			attachments := make([]*Token, 0)
+			if len(values) > 1 {
+				attachments = append(attachments, NewToken(ANCHOR, values[0]))
+				attachments = append(attachments, NewToken(VALUE, strings.Join(values[1:], " ")))
+			} else {
+				attachments = append(attachments, NewToken(ANCHOR, value))
+			}
+			parentToken.Attachments = attachments
 		} else if strings.Contains(line, ": *") {
 			parts := strings.SplitN(line, ": *", 2)
-			tokens = append(tokens, NewToken(KEY, strings.TrimSpace(parts[0])))
-			tokens = append(tokens, NewToken(ALIAS, strings.TrimSpace(parts[1])))
+			token := NewToken(KEY, strings.TrimSpace(parts[0]))
+			token.Attachments = []*Token{NewToken(ALIAS, strings.TrimSpace(parts[1]))}
+			tokens = append(tokens, token)
 		} else if strings.Contains(line, ":") {
 			parts := strings.SplitN(line, ":", 2)
 			parentToken = NewToken(KEY, strings.TrimSpace(parts[0]))
 			tokens = append(tokens, parentToken)
+			attachments := make([]*Token, 0)
 			if len(parts) > 1 && len(strings.TrimSpace(parts[1])) > 0 {
-				tokens = append(tokens, NewToken(VALUE, strings.TrimSpace(parts[1])))
+				attachments = append(attachments, NewToken(VALUE, strings.TrimSpace(parts[1])))
 			}
+			parentToken.Attachments = attachments
 		}
 
 		if i < len(lines)-1 {
@@ -122,6 +215,21 @@ func findEndOfBlock(lines []string, start, level int) int {
 	return len(lines)
 }
 
+func Parse(tokens []*Token) (map[string]any, error) {
+	result := make(map[string]any)
+	anchors := make(map[string]any)
+	for _, token := range tokens {
+		value, err := token.Parse(anchors)
+		if err != nil {
+			return nil, err
+		}
+		if value != nil {
+			result[token.Literal] = value
+		}
+	}
+	return result, nil
+}
+
 func main() {
 	const yamlContent = `
 key1: value1
@@ -129,7 +237,7 @@ key2: &key2
   - list item 1
   - list item 2
 key3:
-  key3_1: value3_1
+  key3_1: &key3_1 value3_1
   key3_2: value3_2
   key3_3:
     key3_3_1: value3_3_1
@@ -146,4 +254,7 @@ key5:
 	for _, token := range tokens {
 		token.Print("")
 	}
+
+	result, err := Parse(tokens)
+	fmt.Println(result, err)
 }

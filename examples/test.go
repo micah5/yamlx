@@ -22,9 +22,9 @@ defaults:
 
 floors:
 	- walls:
-		-   width: 0.5
-		height: 1.0
-		sill_type: 1
+		-	width: 0.5
+			height: 1.0
+			sill_type: 1
 	- a : b
 	- c: d
 	- e: g
