@@ -1,4 +1,4 @@
-package main
+package yamlx
 
 import (
 	"fmt"
@@ -64,23 +64,7 @@ func (t Token) Parse(anchors map[string]any) (any, error) {
 		var returnValue any
 		var err error
 		if len(t.Children) > 0 {
-			if t.Children[0].Type == LIST_ITEM {
-				l := make([]any, len(t.Children))
-				for i, child := range t.Children {
-					l[i], err = child.Parse(anchors)
-				}
-				returnValue = l
-			} else {
-				m := make(map[string]any)
-				var value any
-				for _, child := range t.Children {
-					value, err = child.Parse(anchors)
-					if value != nil {
-						m[child.Literal] = value
-					}
-				}
-				returnValue = m
-			}
+			returnValue, err = parseChildren(t.Children, anchors)
 		} else if len(t.Attachments) > 0 {
 			value := t.Attachments.Find(VALUE)
 			alias := t.Attachments.Find(ALIAS)
@@ -91,6 +75,8 @@ func (t Token) Parse(anchors map[string]any) (any, error) {
 			} else {
 				return nil, fmt.Errorf("key has no value: %s", t)
 			}
+		} else {
+			return nil, fmt.Errorf("key has no value: %s", t)
 		}
 		if anchor != nil {
 			anchors[anchor.Literal] = returnValue
@@ -99,13 +85,44 @@ func (t Token) Parse(anchors map[string]any) (any, error) {
 	case VALUE:
 		return parseValue(t.Literal), nil
 	case LIST_ITEM:
-		return parseValue(t.Literal), nil
+		value := t.Attachments.Find(VALUE)
+		if value != nil {
+			return map[string]any{t.Literal: parseValue(value.Literal)}, nil
+		} else if len(t.Children) > 0 {
+			returnValue, err := parseChildren(t.Children, anchors)
+			return map[string]any{t.Literal: returnValue}, err
+		} else {
+			return parseValue(t.Literal), nil
+		}
 	case MERGE_KEY:
 		return anchors[t.Literal], nil
 	default:
 		return nil, fmt.Errorf("unknown token type: %s", t)
 	}
 	return nil, nil
+}
+
+func parseChildren(tokens []*Token, anchors map[string]any) (any, error) {
+	var returnValue any
+	var err error
+	if tokens[0].Type == LIST_ITEM {
+		l := make([]any, len(tokens))
+		for i, child := range tokens {
+			l[i], err = child.Parse(anchors)
+		}
+		returnValue = l
+	} else {
+		m := make(map[string]any)
+		var value any
+		for _, child := range tokens {
+			value, err = child.Parse(anchors)
+			if value != nil {
+				m[child.Literal] = value
+			}
+		}
+		returnValue = m
+	}
+	return returnValue, err
 }
 
 func parseValue(literal string) any {
@@ -121,11 +138,7 @@ func parseValue(literal string) any {
 	return literal
 }
 
-func Tokenize(lines []string, currentLevel int) []*Token {
-	if len(lines) == 0 {
-		return nil
-	}
-
+func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
 	var tokens []*Token
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
@@ -144,7 +157,12 @@ func Tokenize(lines []string, currentLevel int) []*Token {
 		// Determine the token type based on the line
 		var parentToken *Token
 		if strings.HasPrefix(line, "- ") {
-			tokens = append(tokens, NewToken(LIST_ITEM, strings.TrimSpace(line[2:])))
+			parts := strings.SplitN(line[2:], ":", 2)
+			parentToken = NewToken(LIST_ITEM, strings.TrimSpace(parts[0]))
+			if len(parts) > 1 && len(strings.TrimSpace(parts[1])) > 0 {
+				parentToken.Attachments = []*Token{NewToken(VALUE, strings.TrimSpace(parts[1]))}
+			}
+			tokens = append(tokens, parentToken)
 		} else if strings.HasPrefix(line, "<<: *") {
 			parts := strings.SplitN(line, "<<: *", 2)
 			tokens = append(tokens, NewToken(MERGE_KEY, strings.TrimSpace(parts[1])))
@@ -176,6 +194,8 @@ func Tokenize(lines []string, currentLevel int) []*Token {
 				attachments = append(attachments, NewToken(VALUE, strings.TrimSpace(parts[1])))
 			}
 			parentToken.Attachments = attachments
+		} else {
+			return nil, fmt.Errorf("invalid line: %s", line)
 		}
 
 		if i < len(lines)-1 {
@@ -183,13 +203,16 @@ func Tokenize(lines []string, currentLevel int) []*Token {
 			if parentToken != nil && nextIndent > currentLevel {
 				// Process nested lines
 				end := findEndOfBlock(lines, i+1, currentLevel)
-				nestedTokens := Tokenize(lines[i+1:end], nextIndent)
+				nestedTokens, err := Tokenize(lines[i+1:end], nextIndent)
+				if err != nil {
+					return nil, err
+				}
 				parentToken.Children = nestedTokens
 				i = end - 1 // Skip processed lines
 			}
 		}
 	}
-	return tokens
+	return tokens, nil
 }
 
 // countLeadingSpaces counts the number of leading spaces in a string.
@@ -230,7 +253,7 @@ func Parse(tokens []*Token) (map[string]any, error) {
 	return result, nil
 }
 
-func main() {
+/*func main() {
 	const yamlContent = `
 key1: value1
 key2: &key2
@@ -258,3 +281,4 @@ key5:
 	result, err := Parse(tokens)
 	fmt.Println(result, err)
 }
+*/
