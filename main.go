@@ -95,7 +95,11 @@ func (t Token) Parse(anchors map[string]any) (any, error) {
 			return parseValue(t.Literal), nil
 		}
 	case MERGE_KEY:
-		return anchors[t.Literal], nil
+		anchorValue := anchors[t.Literal]
+		if anchorValue == nil {
+			return nil, fmt.Errorf("anchor not found: %s", t.Literal)
+		}
+		return anchorValue, nil
 	default:
 		return nil, fmt.Errorf("unknown token type: %s", t)
 	}
@@ -117,7 +121,13 @@ func parseChildren(tokens []*Token, anchors map[string]any) (any, error) {
 		for _, child := range tokens {
 			value, err = child.Parse(anchors)
 			if value != nil {
-				m[child.Literal] = value
+				if valueMap, ok := value.(map[string]any); ok && child.Type == MERGE_KEY {
+					for k, v := range valueMap {
+						m[k] = v
+					}
+				} else {
+					m[child.Literal] = value
+				}
 			}
 		}
 		returnValue = m

@@ -120,3 +120,88 @@ key2:
 	_, err := Parse(tokens)
 	assert.Error(t, err)
 }
+
+func TestAnchorsAndAliasesParsing(t *testing.T) {
+	yamlContent := `
+anchorKey: &anchor value
+aliasKey: *anchor
+`
+	lines := strings.Split(yamlContent, "\n")
+	tokens, _ := Tokenize(lines, 0)
+	result, err := Parse(tokens)
+
+	expected := map[string]any{
+		"anchorKey": "value",
+		"aliasKey":  "value", // aliasKey should have the same value as anchorKey
+	}
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
+func TestMergeKeyParsing(t *testing.T) {
+	yamlContent := `
+defaults: &defaults
+  key1: default1
+  key2: default2
+
+custom:
+  <<: *defaults
+  key2: custom2
+`
+	lines := strings.Split(yamlContent, "\n")
+	tokens, _ := Tokenize(lines, 0)
+	result, err := Parse(tokens)
+
+	expected := map[string]any{
+		"defaults": map[string]any{
+			"key1": "default1",
+			"key2": "default2",
+		},
+		"custom": map[string]any{
+			"key1": "default1",
+			"key2": "custom2", // Should override the default value
+		},
+	}
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
+func TestComplexStructureWithAnchorsAliasesMergeKeys(t *testing.T) {
+	yamlContent := `
+base: &base
+  id: 1
+  name: Base
+
+extended:
+  <<: *base
+  description: Extended version
+
+aliasTest:
+  <<: *base
+  id: *base
+`
+	lines := strings.Split(yamlContent, "\n")
+	tokens, _ := Tokenize(lines, 0)
+	result, err := Parse(tokens)
+
+	expected := map[string]any{
+		"base": map[string]any{
+			"id":   int64(1),
+			"name": "Base",
+		},
+		"extended": map[string]any{
+			"id":          int64(1),
+			"name":        "Base",
+			"description": "Extended version",
+		},
+		"aliasTest": map[string]any{
+			"id":   map[string]any{"id": int64(1), "name": "Base"},
+			"name": "Base",
+		},
+	}
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
