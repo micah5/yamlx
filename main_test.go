@@ -205,3 +205,23 @@ aliasTest:
 	assert.NoError(t, err)
 	assert.Equal(t, expected, result)
 }
+
+func TestCommentsParsing(t *testing.T) {
+	yamlContent := `
+# This is a full line comment
+key1: value1 # This is a trailing comment
+key2: value2
+# Another full line comment
+`
+	lines := strings.Split(yamlContent, "\n")
+	tokens, _ := Tokenize(lines, 0)
+	result, err := Parse(tokens)
+
+	expected := map[string]any{
+		"key1": "value1",
+		"key2": "value2",
+	}
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}

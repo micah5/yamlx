@@ -152,16 +152,18 @@ func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
 	var tokens []*Token
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
+
+		// Remove comments
+		if strings.Contains(line, "#") {
+			line = strings.Split(line, "#")[0]
+		}
+
+		// Trim spaces
 		line = strings.TrimSpace(line)
 
 		// Skip empty lines
 		if len(line) == 0 {
 			continue
-		}
-
-		// Remove comments
-		if strings.Contains(line, "#") {
-			line = strings.Split(line, "#")[0]
 		}
 
 		// Determine the token type based on the line
