@@ -283,6 +283,36 @@ key3: ${alias_value == "alice" ? "yes" : "no"}
 	assert.Equal(t, expected, result)
 }
 
+func TestAnchorAccessParsing(t *testing.T) {
+	yamlContent := `
+anchorKey: &anchor
+  key1: value1
+  key2: value2
+retrieved:
+  key1: *anchor.key1
+  key2: ${anchor.key2}
+  key3: ${anchor.key2 == "value2" ? "yes" : "no"}
+`
+	lines := strings.Split(yamlContent, "\n")
+	tokens, _ := Tokenize(lines, 0)
+	result, err := Parse(tokens)
+
+	expected := map[string]any{
+		"anchorKey": map[string]any{
+			"key1": "value1",
+			"key2": "value2",
+		},
+		"retrieved": map[string]any{
+			"key1": "value1",
+			"key2": "value2",
+			"key3": "yes",
+		},
+	}
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
 type SimpleStruct struct {
 	Key1 string `yamlx:"key1"`
 	Key2 string `yamlx:"key2"`

@@ -84,6 +84,11 @@ func (t Token) Parse(anchors map[string]any) (any, error) {
 		}
 		if anchor != nil {
 			anchors[anchor.Literal] = returnValue
+			if m, ok := returnValue.(map[string]any); ok {
+				for k, v := range createAnchorMap(m, anchor.Literal) {
+					anchors[k] = v
+				}
+			}
 		}
 		return returnValue, err
 	case VALUE:
@@ -109,6 +114,20 @@ func (t Token) Parse(anchors map[string]any) (any, error) {
 		return nil, fmt.Errorf("unknown token type: %s", t)
 	}
 	return nil, nil
+}
+
+func createAnchorMap(value map[string]any, prefix string) map[string]any {
+	returnMap := make(map[string]any)
+	for k, v := range value {
+		if m, ok := v.(map[string]any); ok {
+			for k2, v2 := range createAnchorMap(m, prefix+"."+k) {
+				returnMap[k2] = v2
+			}
+		} else {
+			returnMap[prefix+"."+k] = v
+		}
+	}
+	return returnMap
 }
 
 func parseChildren(tokens []*Token, anchors map[string]any) (any, error) {
@@ -168,7 +187,22 @@ func replaceWithMap(input string, anchors map[string]any) (string, error) {
 
 	outputString := input
 	for _, m := range matches {
-		expression, err := govaluate.NewEvaluableExpression(m[1])
+		expressionString := m[1]
+
+		// Wrap any anchors in square brackets
+		for k, _ := range anchors {
+			if expressionString == k {
+				expressionString = fmt.Sprintf("[%v]", k)
+			} else {
+				index := strings.Index(expressionString, k)
+				if index >= 0 && index+len(k) < len(expressionString) && expressionString[index+len(k)] != '.' {
+					expressionString = strings.Replace(expressionString, k, fmt.Sprintf("[%v]", k), -1)
+				}
+			}
+		}
+
+		// Evaluate the expression
+		expression, err := govaluate.NewEvaluableExpression(expressionString)
 		if err != nil {
 			return "", err
 		}
