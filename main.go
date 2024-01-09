@@ -180,6 +180,226 @@ func parseValue(literal string, anchors map[string]any) (any, error) {
 	return literal, nil
 }
 
+var functions = map[string]govaluate.ExpressionFunction{
+	"len": func(args ...any) (any, error) {
+		if strval, ok := args[0].(string); ok {
+			length := len(strval)
+			return (float64)(length), nil
+		} else {
+			return len(args), nil
+		}
+	},
+	"contains": func(args ...any) (any, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("contains function requires 2 arguments")
+		}
+		if strval, ok := args[0].(string); ok {
+			if substrval, ok := args[1].(string); ok {
+				return strings.Contains(strval, substrval), nil
+			}
+		} else {
+			found := false
+			for _, v := range args[0].([]any) {
+				if v == args[1] {
+					found = true
+					break
+				}
+			}
+			return found, nil
+		}
+		return nil, fmt.Errorf("contains function requires string arguments")
+	},
+	"max": func(args ...any) (any, error) {
+		if len(args) < 1 {
+			return nil, fmt.Errorf("max function requires at least 1 argument")
+		}
+		max := args[0]
+		for _, v := range args {
+			if i, ok := v.(int64); ok {
+				if i > max.(int64) {
+					max = i
+				}
+			} else if f, ok := v.(float64); ok {
+				if f > max.(float64) {
+					max = f
+				}
+			} else {
+				return nil, fmt.Errorf("max function requires numeric arguments")
+			}
+		}
+		return max, nil
+	},
+	"min": func(args ...any) (any, error) {
+		if len(args) < 1 {
+			return nil, fmt.Errorf("min function requires at least 1 argument")
+		}
+		min := args[0]
+		for _, v := range args {
+			if i, ok := v.(int64); ok {
+				if i < min.(int64) {
+					min = i
+				}
+			} else if f, ok := v.(float64); ok {
+				if f < min.(float64) {
+					min = f
+				}
+			} else {
+				return nil, fmt.Errorf("min function requires numeric arguments")
+			}
+		}
+		return min, nil
+	},
+	"upper": func(args ...any) (any, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("upper function requires 1 argument")
+		}
+		if strval, ok := args[0].(string); ok {
+			return strings.ToUpper(strval), nil
+		}
+		return nil, fmt.Errorf("upper function requires string argument")
+	},
+	"lower": func(args ...any) (any, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("lower function requires 1 argument")
+		}
+		if strval, ok := args[0].(string); ok {
+			return strings.ToLower(strval), nil
+		}
+		return nil, fmt.Errorf("lower function requires string argument")
+	},
+	"title": func(args ...any) (any, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("title function requires 1 argument")
+		}
+		if strval, ok := args[0].(string); ok {
+			return strings.Title(strval), nil
+		}
+		return nil, fmt.Errorf("title function requires string argument")
+	},
+	"trim": func(args ...any) (any, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("trim function requires 1 argument")
+		}
+		if strval, ok := args[0].(string); ok {
+			return strings.TrimSpace(strval), nil
+		}
+		return nil, fmt.Errorf("trim function requires string argument")
+	},
+	"join": func(args ...any) (any, error) {
+		if len(args) < 2 {
+			return nil, fmt.Errorf("join function requires 2 arguments")
+		}
+		if strval, ok := args[0].(string); ok {
+			if slice, ok := args[1].([]any); ok {
+				strs := make([]string, len(slice))
+				for i, v := range slice {
+					strs[i] = fmt.Sprintf("%v", v)
+				}
+				return strings.Join(strs, strval), nil
+			} else {
+				// join remaining arguments
+				strs := make([]string, len(args)-1)
+				for i, v := range args[1:] {
+					strs[i] = fmt.Sprintf("%v", v)
+				}
+				return strings.Join(strs, strval), nil
+			}
+		}
+		return nil, fmt.Errorf("join function requires string and slice arguments")
+	},
+	"replace": func(args ...any) (any, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("replace function requires 3 arguments")
+		}
+		if strval, ok := args[0].(string); ok {
+			if oldstrval, ok := args[1].(string); ok {
+				if newstrval, ok := args[2].(string); ok {
+					return strings.Replace(strval, oldstrval, newstrval, -1), nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("replace function requires string arguments")
+	},
+	"substr": func(args ...any) (any, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("substr function requires 3 arguments")
+		}
+		if strval, ok := args[0].(string); ok {
+			if startval, ok := args[1].(float64); ok {
+				if endval, ok := args[2].(float64); ok {
+					return strval[int(startval):int(endval)], nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("substr function requires string and integer arguments")
+	},
+	"strrev": func(args ...any) (any, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("strrev function requires 1 argument")
+		}
+		if strval, ok := args[0].(string); ok {
+			runes := []rune(strval)
+			for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+				runes[i], runes[j] = runes[j], runes[i]
+			}
+			return string(runes), nil
+		}
+		return nil, fmt.Errorf("strrev function requires string argument")
+	},
+	"startswith": func(args ...any) (any, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("startswith function requires 2 arguments")
+		}
+		if strval, ok := args[0].(string); ok {
+			if substrval, ok := args[1].(string); ok {
+				return strings.HasPrefix(strval, substrval), nil
+			}
+		}
+		return nil, fmt.Errorf("startswith function requires string arguments")
+	},
+	"endswith": func(args ...any) (any, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("endswith function requires 2 arguments")
+		}
+		if strval, ok := args[0].(string); ok {
+			if substrval, ok := args[1].(string); ok {
+				return strings.HasSuffix(strval, substrval), nil
+			}
+		}
+		return nil, fmt.Errorf("endswith function requires string arguments")
+	},
+	"alltrue": func(args ...any) (any, error) {
+		if len(args) < 1 {
+			return nil, fmt.Errorf("alltrue function requires at least 1 argument")
+		}
+		for _, v := range args {
+			if b, ok := v.(bool); ok {
+				if !b {
+					return false, nil
+				}
+			} else {
+				return nil, fmt.Errorf("alltrue function requires boolean arguments")
+			}
+		}
+		return true, nil
+	},
+	"anytrue": func(args ...any) (any, error) {
+		if len(args) < 1 {
+			return nil, fmt.Errorf("anytrue function requires at least 1 argument")
+		}
+		for _, v := range args {
+			if b, ok := v.(bool); ok {
+				if b {
+					return true, nil
+				}
+			} else {
+				return nil, fmt.Errorf("anytrue function requires boolean arguments")
+			}
+		}
+		return false, nil
+	},
+}
+
 func replaceWithMap(input string, anchors map[string]any) (string, error) {
 	// Regular expression to find ${} patterns
 	re := regexp.MustCompile(`\$\{([^\}]+)\}`)
@@ -202,7 +422,7 @@ func replaceWithMap(input string, anchors map[string]any) (string, error) {
 		}
 
 		// Evaluate the expression
-		expression, err := govaluate.NewEvaluableExpression(expressionString)
+		expression, err := govaluate.NewEvaluableExpressionWithFunctions(expressionString, functions)
 		if err != nil {
 			return "", err
 		}
@@ -243,7 +463,10 @@ func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
 			parts := strings.SplitN(line[2:], ":", 2)
 			parentToken = NewToken(LIST_ITEM, strings.TrimSpace(parts[0]))
 			if len(parts) > 1 && len(strings.TrimSpace(parts[1])) > 0 {
-				parentToken.Attachments = []*Token{NewToken(VALUE, strings.TrimSpace(parts[1]))}
+				attachment := handleKeyValueString(parentToken, strings.TrimSpace(parts[1]))
+				if attachment != nil {
+					parentToken.Attachments = []*Token{attachment}
+				}
 			}
 			tokens = append(tokens, parentToken)
 		} else if strings.HasPrefix(line, "<<: *") {
@@ -258,7 +481,10 @@ func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
 			attachments := make([]*Token, 0)
 			if len(values) > 1 {
 				attachments = append(attachments, NewToken(ANCHOR, values[0]))
-				attachments = append(attachments, NewToken(VALUE, strings.Join(values[1:], " ")))
+				attachment := handleKeyValueString(parentToken, strings.Join(values[1:], " "))
+				if attachment != nil {
+					attachments = append(attachments, attachment)
+				}
 			} else {
 				attachments = append(attachments, NewToken(ANCHOR, value))
 			}
@@ -272,18 +498,9 @@ func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
 			parts := strings.SplitN(line, ":", 2)
 			parentToken = NewToken(KEY, strings.TrimSpace(parts[0]))
 			if len(parts) > 1 && len(strings.TrimSpace(parts[1])) > 0 {
-				if strings.HasPrefix(strings.TrimSpace(parts[1]), "[") {
-					// get the string between brackets
-					contents := strings.Trim(strings.TrimSpace(parts[1]), "[]")
-					// split by comma
-					values := strings.Split(contents, ",")
-					children := make([]*Token, 0)
-					for _, value := range values {
-						children = append(children, NewToken(LIST_ITEM, strings.TrimSpace(value)))
-					}
-					parentToken.Children = children
-				} else {
-					parentToken.Attachments = []*Token{NewToken(VALUE, strings.TrimSpace(parts[1]))}
+				attachment := handleKeyValueString(parentToken, strings.TrimSpace(parts[1]))
+				if attachment != nil {
+					parentToken.Attachments = []*Token{attachment}
 				}
 			}
 			tokens = append(tokens, parentToken)
@@ -306,6 +523,24 @@ func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
 		}
 	}
 	return tokens, nil
+}
+
+func handleKeyValueString(parentToken *Token, value string) *Token {
+	// returns attachment if necessary
+	if strings.HasPrefix(strings.TrimSpace(value), "[") {
+		// get the string between brackets
+		contents := strings.Trim(strings.TrimSpace(value), "[]")
+		// split by comma
+		values := strings.Split(contents, ",")
+		children := make([]*Token, 0)
+		for _, value := range values {
+			children = append(children, NewToken(LIST_ITEM, strings.TrimSpace(value)))
+		}
+		parentToken.Children = children
+	} else {
+		return NewToken(VALUE, strings.TrimSpace(value))
+	}
+	return nil
 }
 
 // countLeadingSpaces counts the number of leading spaces in a string.

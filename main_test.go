@@ -313,6 +313,80 @@ retrieved:
 	assert.Equal(t, expected, result)
 }
 
+func TestFunctionCallParsing(t *testing.T) {
+	yamlContent := `
+numbers: &numbers [1, 2, 3, 4, 5]
+len:
+  - ${len("hello")}
+  - ${len(numbers)}
+max:
+  - ${max(1, 2, 3, 4)}
+  - ${max(numbers)}
+min:
+  - ${min(0, 1, 2, 3, 4)}
+  - ${min(numbers)}
+upper: ${upper("hello")}
+lower: ${lower("HELLO")}
+title: ${title("hello world")}
+trim: ${trim("  hello  ")}
+join:
+  - ${join("-", "foo", "bar", "baz")}
+  - ${join(",", numbers)}
+replace: ${replace("hello world", "world", "universe")}
+substr: ${substr("hello world", 0, 5)}
+strrev: ${strrev("hello world")}
+startswith:
+  - ${startswith("hello world", "hello")}
+  - ${startswith("hello world", "world")}
+endswith:
+  - ${endswith("hello world", "hello")}
+  - ${endswith("hello world", "world")}
+alltrue:
+  - ${alltrue(true, true, true)}
+  - ${alltrue(true, false, false)}
+anytrue:
+  - ${anytrue(true, false, true)}
+  - ${anytrue(false, false, false)}
+`
+	lines := strings.Split(yamlContent, "\n")
+	tokens, _ := Tokenize(lines, 0)
+	result, err := Parse(tokens)
+
+	expected := map[string]any{
+		"numbers": []any{int64(1), int64(2), int64(3), int64(4), int64(5)},
+		"len": []any{
+			int64(5),
+			int64(5),
+		},
+		"max": []any{
+			int64(4),
+			int64(5),
+		},
+		"min": []any{
+			int64(0),
+			int64(1),
+		},
+		"upper": "HELLO",
+		"lower": "hello",
+		"title": "Hello World",
+		"trim":  "hello",
+		"join": []any{
+			"foo-bar-baz",
+			"1,2,3,4,5",
+		},
+		"replace":    "hello universe",
+		"substr":     "hello",
+		"strrev":     "dlrow olleh",
+		"startswith": []any{true, false},
+		"endswith":   []any{false, true},
+		"alltrue":    []any{true, false},
+		"anytrue":    []any{true, false},
+	}
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
 type SimpleStruct struct {
 	Key1 string `yamlx:"key1"`
 	Key2 string `yamlx:"key2"`
