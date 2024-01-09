@@ -3,7 +3,9 @@ package yamlx
 import (
 	"errors"
 	"fmt"
+	"github.com/Knetic/govaluate"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -71,7 +73,7 @@ func (t Token) Parse(anchors map[string]any) (any, error) {
 			value := t.Attachments.Find(VALUE)
 			alias := t.Attachments.Find(ALIAS)
 			if value != nil {
-				returnValue = parseValue(value.Literal)
+				returnValue, err = parseValue(value.Literal, anchors)
 			} else if alias != nil {
 				returnValue = anchors[alias.Literal]
 			} else {
@@ -85,16 +87,17 @@ func (t Token) Parse(anchors map[string]any) (any, error) {
 		}
 		return returnValue, err
 	case VALUE:
-		return parseValue(t.Literal), nil
+		return parseValue(t.Literal, anchors)
 	case LIST_ITEM:
 		value := t.Attachments.Find(VALUE)
 		if value != nil {
-			return map[string]any{t.Literal: parseValue(value.Literal)}, nil
+			returnValue, err := parseValue(value.Literal, anchors)
+			return map[string]any{t.Literal: returnValue}, err
 		} else if len(t.Children) > 0 {
 			returnValue, err := parseChildren(t.Children, anchors)
 			return map[string]any{t.Literal: returnValue}, err
 		} else {
-			return parseValue(t.Literal), nil
+			return parseValue(t.Literal, anchors)
 		}
 	case MERGE_KEY:
 		anchorValue := anchors[t.Literal]
@@ -137,20 +140,49 @@ func parseChildren(tokens []*Token, anchors map[string]any) (any, error) {
 	return returnValue, err
 }
 
-func parseValue(literal string) any {
+func parseValue(literal string, anchors map[string]any) (any, error) {
+	literal, err := replaceWithMap(literal, anchors)
+	if err != nil {
+		return nil, err
+	}
+
 	if i, err := strconv.ParseInt(literal, 10, 64); err == nil {
-		return i
+		return i, nil
 	}
 	if f, err := strconv.ParseFloat(literal, 64); err == nil {
-		return f
+		return f, nil
 	}
 	if b, err := strconv.ParseBool(literal); err == nil {
-		return b
+		return b, nil
 	}
 	if strings.HasPrefix(literal, "\"") && strings.HasSuffix(literal, "\"") {
-		return literal[1 : len(literal)-1]
+		return literal[1 : len(literal)-1], nil
 	}
-	return literal
+	return literal, nil
+}
+
+func replaceWithMap(input string, anchors map[string]any) (string, error) {
+	// Regular expression to find ${} patterns
+	re := regexp.MustCompile(`\$\{([^\}]+)\}`)
+	matches := re.FindAllStringSubmatch(input, -1)
+
+	outputString := input
+	for _, m := range matches {
+		expression, err := govaluate.NewEvaluableExpression(m[1])
+		if err != nil {
+			return "", err
+		}
+
+		result, err := expression.Evaluate(anchors)
+		if err != nil {
+			return "", err
+		}
+
+		resultString := fmt.Sprintf("%v", result)
+		outputString = strings.Replace(outputString, m[0], resultString, -1)
+	}
+
+	return outputString, nil
 }
 
 func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
@@ -205,12 +237,22 @@ func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
 		} else if strings.Contains(line, ":") {
 			parts := strings.SplitN(line, ":", 2)
 			parentToken = NewToken(KEY, strings.TrimSpace(parts[0]))
-			tokens = append(tokens, parentToken)
-			attachments := make([]*Token, 0)
 			if len(parts) > 1 && len(strings.TrimSpace(parts[1])) > 0 {
-				attachments = append(attachments, NewToken(VALUE, strings.TrimSpace(parts[1])))
+				if strings.HasPrefix(strings.TrimSpace(parts[1]), "[") {
+					// get the string between brackets
+					contents := strings.Trim(strings.TrimSpace(parts[1]), "[]")
+					// split by comma
+					values := strings.Split(contents, ",")
+					children := make([]*Token, 0)
+					for _, value := range values {
+						children = append(children, NewToken(LIST_ITEM, strings.TrimSpace(value)))
+					}
+					parentToken.Children = children
+				} else {
+					parentToken.Attachments = []*Token{NewToken(VALUE, strings.TrimSpace(parts[1]))}
+				}
 			}
-			parentToken.Attachments = attachments
+			tokens = append(tokens, parentToken)
 		} else {
 			return nil, fmt.Errorf("invalid line: %s", line)
 		}

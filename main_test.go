@@ -61,6 +61,7 @@ items:
   - item4:
     - item4_1
     - item4_2
+items2: [1, 2, 3]
 `
 	lines := strings.Split(yamlContent, "\n")
 	tokens, _ := Tokenize(lines, 0)
@@ -73,6 +74,7 @@ items:
 			map[string]any{"item3": int64(12)},
 			map[string]any{"item4": []any{"item4_1", "item4_2"}},
 		},
+		"items2": []any{int64(1), int64(2), int64(3)},
 	}
 
 	assert.NoError(t, err)
@@ -130,14 +132,16 @@ func TestAnchorsAndAliasesParsing(t *testing.T) {
 	yamlContent := `
 anchorKey: &anchor value
 aliasKey: *anchor
+handlebars: ${anchor}
 `
 	lines := strings.Split(yamlContent, "\n")
 	tokens, _ := Tokenize(lines, 0)
 	result, err := Parse(tokens)
 
 	expected := map[string]any{
-		"anchorKey": "value",
-		"aliasKey":  "value", // aliasKey should have the same value as anchorKey
+		"anchorKey":  "value",
+		"aliasKey":   "value", // aliasKey should have the same value as anchorKey
+		"handlebars": "value", // handlebars should have the same value as anchorKey
 	}
 
 	assert.NoError(t, err)
@@ -225,6 +229,54 @@ key2: value2
 	expected := map[string]any{
 		"key1": "value1",
 		"key2": "value2",
+	}
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
+func TestSimpleArithmaticExpressionParsing(t *testing.T) {
+	yamlContent := `
+key1: ${1 + 2}
+alias_value: &alias_value 100
+key2: ${alias_value + 100}
+key3: ${alias_value / 2}
+key4: ${alias_value * 2}
+key5: ${alias_value - 100}
+`
+	lines := strings.Split(yamlContent, "\n")
+	tokens, _ := Tokenize(lines, 0)
+	result, err := Parse(tokens)
+
+	expected := map[string]any{
+		"key1":        int64(3),
+		"alias_value": int64(100),
+		"key2":        int64(200),
+		"key3":        int64(50),
+		"key4":        int64(200),
+		"key5":        int64(0),
+	}
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
+func TestConditionalExpressionParsing(t *testing.T) {
+	yamlContent := `
+key1: ${1 == 1}
+alias_value: &alias_value bob
+key2: ${alias_value == "bob"}
+key3: ${alias_value == "alice" ? "yes" : "no"}
+`
+	lines := strings.Split(yamlContent, "\n")
+	tokens, _ := Tokenize(lines, 0)
+	result, err := Parse(tokens)
+
+	expected := map[string]any{
+		"key1":        true,
+		"alias_value": "bob",
+		"key2":        true,
+		"key3":        "no",
 	}
 
 	assert.NoError(t, err)
