@@ -62,6 +62,7 @@ items:
     - item4_1
     - item4_2
 items2: [1, 2, 3]
+items3: [1..5]
 `
 	lines := strings.Split(yamlContent, "\n")
 	tokens, _ := Tokenize(lines, 0)
@@ -75,6 +76,7 @@ items2: [1, 2, 3]
 			map[string]any{"item4": []any{"item4_1", "item4_2"}},
 		},
 		"items2": []any{int64(1), int64(2), int64(3)},
+		"items3": []any{int64(1), int64(2), int64(3), int64(4), int64(5)},
 	}
 
 	assert.NoError(t, err)
@@ -386,6 +388,12 @@ anytrue:
 	assert.NoError(t, err)
 	assert.Equal(t, expected, result)
 }
+
+/*func TestLoopParsing(t *testing.T) {
+	yamlContent := `
+values:
+  - for i in [1..5]:
+      name: server${i}*/
 
 type SimpleStruct struct {
 	Key1 string `yamlx:"key1"`

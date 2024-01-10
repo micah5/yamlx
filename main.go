@@ -530,13 +530,26 @@ func handleKeyValueString(parentToken *Token, value string) *Token {
 	if strings.HasPrefix(strings.TrimSpace(value), "[") {
 		// get the string between brackets
 		contents := strings.Trim(strings.TrimSpace(value), "[]")
-		// split by comma
-		values := strings.Split(contents, ",")
-		children := make([]*Token, 0)
-		for _, value := range values {
-			children = append(children, NewToken(LIST_ITEM, strings.TrimSpace(value)))
+		// split by ..
+		values := strings.Split(contents, "..")
+		if len(values) == 2 {
+			start, end := strings.TrimSpace(values[0]), strings.TrimSpace(values[1])
+			startInt, _ := strconv.ParseInt(start, 10, 64)
+			endInt, _ := strconv.ParseInt(end, 10, 64)
+			children := make([]*Token, 0)
+			for i := startInt; i <= endInt; i++ {
+				children = append(children, NewToken(LIST_ITEM, fmt.Sprintf("%d", i)))
+			}
+			parentToken.Children = children
+		} else {
+			// split by comma
+			values := strings.Split(contents, ",")
+			children := make([]*Token, 0)
+			for _, value := range values {
+				children = append(children, NewToken(LIST_ITEM, strings.TrimSpace(value)))
+			}
+			parentToken.Children = children
 		}
-		parentToken.Children = children
 	} else {
 		return NewToken(VALUE, strings.TrimSpace(value))
 	}
