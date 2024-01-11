@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Knetic/govaluate"
+	"math/rand"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -259,7 +260,7 @@ var functions = map[string]govaluate.ExpressionFunction{
 		}
 	},
 	"contains": func(args ...any) (any, error) {
-		if len(args) != 2 {
+		if len(args) < 2 {
 			return nil, fmt.Errorf("contains function requires 2 arguments")
 		}
 		if strval, ok := args[0].(string); ok {
@@ -268,8 +269,16 @@ var functions = map[string]govaluate.ExpressionFunction{
 			}
 		} else {
 			found := false
-			for _, v := range args[0].([]any) {
-				if v == args[1] {
+			for _, v := range args[:len(args)-1] {
+				expression, err := govaluate.NewEvaluableExpression(fmt.Sprintf("%v == %v", v, args[len(args)-1]))
+				if err != nil {
+					return nil, err
+				}
+				result, err := expression.Evaluate(nil)
+				if err != nil {
+					return nil, err
+				}
+				if result.(bool) {
 					found = true
 					break
 				}
@@ -277,6 +286,19 @@ var functions = map[string]govaluate.ExpressionFunction{
 			return found, nil
 		}
 		return nil, fmt.Errorf("contains function requires string arguments")
+	},
+	"rand": func(args ...any) (any, error) {
+		if min, ok := args[0].(float64); ok && len(args) == 2 {
+			if max, ok := args[1].(float64); ok {
+				return rand.Int63n(int64(max-min)) + int64(min), nil
+			} else {
+				return nil, fmt.Errorf("rand function requires 2 integer arguments")
+			}
+		} else {
+			// select random option in args
+			return args[rand.Intn(len(args))], nil
+		}
+		return nil, fmt.Errorf("invalid arguments for rand function")
 	},
 	"max": func(args ...any) (any, error) {
 		if len(args) < 1 {

@@ -325,6 +325,11 @@ numbers: &numbers [1, 2, 3, 4, 5]
 len:
   - ${len("hello")}
   - ${len(numbers)}
+contains:
+  - ${contains("hello world", "hello")}
+  - ${contains(numbers, 3)}
+  - ${contains("hello world", "foo")}
+  - ${contains(numbers, 6)}
 max:
   - ${max(1, 2, 3, 4)}
   - ${max(numbers)}
@@ -364,6 +369,12 @@ anytrue:
 			int64(5),
 			int64(5),
 		},
+		"contains": []any{
+			true,
+			true,
+			false,
+			false,
+		},
 		"max": []any{
 			int64(4),
 			int64(5),
@@ -391,6 +402,28 @@ anytrue:
 
 	assert.NoError(t, err)
 	assert.Equal(t, expected, result)
+}
+
+func TestRandomFunctionParsing(t *testing.T) {
+	yamlContent := `
+numbers: &numbers [1, 2, 3]
+names: &names [foo, bar, baz]
+random:
+  - ${rand(1, 10)}
+  - ${rand(numbers)}
+  - ${rand(names)}
+`
+	lines := strings.Split(yamlContent, "\n")
+	tokens, _ := Tokenize(lines, 0)
+	result, err := Parse(tokens)
+
+	l := result["random"].([]any)
+	assert.GreaterOrEqual(t, l[0].(int64), int64(1))
+	assert.LessOrEqual(t, l[0].(int64), int64(10))
+	assert.Contains(t, []any{int64(1), int64(2), int64(3)}, l[1].(int64))
+	assert.Contains(t, []any{"foo", "bar", "baz"}, l[2].(string))
+
+	assert.NoError(t, err)
 }
 
 func TestLoopParsing(t *testing.T) {
