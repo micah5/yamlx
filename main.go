@@ -20,6 +20,8 @@ const (
 	ANCHOR
 	ALIAS
 	MERGE_KEY
+	LOOP
+	LOOP_RANGE
 )
 
 type Tokens []*Token
@@ -46,7 +48,7 @@ func NewToken(t Type, literal string) *Token {
 }
 
 func (t Token) String() string {
-	tokenTypes := []string{"KEY", "VALUE", "LIST_ITEM", "ANCHOR", "ALIAS", "MERGE_KEY"}
+	tokenTypes := []string{"KEY", "VALUE", "LIST_ITEM", "ANCHOR", "ALIAS", "MERGE_KEY", "LOOP", "LOOP_RANGE"}
 	result := fmt.Sprintf("%s: %s", tokenTypes[t.Type], t.Literal)
 	return result
 }
@@ -95,9 +97,31 @@ func (t Token) Parse(anchors map[string]any) (any, error) {
 		return parseValue(t.Literal, anchors)
 	case LIST_ITEM:
 		value := t.Attachments.Find(VALUE)
-		if value != nil {
-			returnValue, err := parseValue(value.Literal, anchors)
-			return map[string]any{t.Literal: returnValue}, err
+		alias := t.Attachments.Find(ALIAS)
+		if value != nil || alias != nil {
+			var returnValue any
+			var err error
+			if value != nil {
+				returnValue, err = parseValue(value.Literal, anchors)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				returnValue = anchors[alias.Literal]
+			}
+			newMap := map[string]any{t.Literal: returnValue}
+			for _, child := range t.Children {
+				if child.Type == KEY {
+					childValue, err := child.Parse(anchors)
+					if err != nil {
+						return newMap, err
+					}
+					newMap[child.Literal] = childValue
+				} else {
+					return newMap, fmt.Errorf("invalid child type: %s", child)
+				}
+			}
+			return newMap, nil
 		} else if len(t.Children) > 0 {
 			returnValue, err := parseChildren(t.Children, anchors)
 			return map[string]any{t.Literal: returnValue}, err
@@ -133,10 +157,55 @@ func createAnchorMap(value map[string]any, prefix string) map[string]any {
 func parseChildren(tokens []*Token, anchors map[string]any) (any, error) {
 	var returnValue any
 	var err error
-	if tokens[0].Type == LIST_ITEM {
-		l := make([]any, len(tokens))
-		for i, child := range tokens {
-			l[i], err = child.Parse(anchors)
+	isList := tokens[0].Type == LIST_ITEM
+	if tokens[0].Type == LOOP {
+		isList = tokens[0].Children[0].Type == LIST_ITEM
+	}
+	if isList {
+		l := make([]any, 0)
+		for _, child := range tokens {
+			if child.Type == LOOP {
+				r := child.Attachments.Find(LOOP_RANGE)
+				rangeString := r.Literal
+				arr := make([]any, 0)
+				if strings.HasPrefix(rangeString, "*") {
+					parts := strings.SplitN(rangeString, "*", 2)
+					anchorKey := strings.TrimSpace(parts[1])
+					arr = anchors[anchorKey].([]any)
+				} else if strings.Contains(rangeString, "..") {
+					parts := strings.SplitN(rangeString, "..", 2)
+					start, _ := strconv.ParseInt(parts[0], 10, 64)
+					end, _ := strconv.ParseInt(parts[1], 10, 64)
+					for i := start; i <= end; i++ {
+						arr = append(arr, i)
+					}
+				} else {
+					parts := strings.Split(rangeString, ",")
+					for _, part := range parts {
+						arr = append(arr, part)
+					}
+				}
+				keys := strings.Split(child.Literal, ",")
+				variableKey := keys[0]
+				var indexKey string
+				if len(keys) == 2 {
+					variableKey = strings.TrimSpace(keys[1])
+					indexKey = strings.TrimSpace(keys[0])
+				}
+				for _, nestedChild := range child.Children {
+					for i, v := range arr {
+						anchors[variableKey] = v
+						if indexKey != "" {
+							anchors[indexKey] = i
+						}
+						elem, _ := nestedChild.Parse(anchors)
+						l = append(l, elem)
+					}
+				}
+			} else {
+				v, _ := child.Parse(anchors)
+				l = append(l, v)
+			}
 		}
 		returnValue = l
 	} else {
@@ -415,7 +484,7 @@ func replaceWithMap(input string, anchors map[string]any) (string, error) {
 				expressionString = fmt.Sprintf("[%v]", k)
 			} else {
 				index := strings.Index(expressionString, k)
-				if index >= 0 && index+len(k) < len(expressionString) && expressionString[index+len(k)] != '.' {
+				if index >= 0 && index+len(k) < len(expressionString) && expressionString[index+len(k)] == ' ' {
 					expressionString = strings.Replace(expressionString, k, fmt.Sprintf("[%v]", k), -1)
 				}
 			}
@@ -459,7 +528,29 @@ func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
 
 		// Determine the token type based on the line
 		var parentToken *Token
-		if strings.HasPrefix(line, "- ") {
+		if strings.Contains(line, "!for") {
+			// for loop
+			// format is: !for <var> in <range>:
+
+			// get text between !for and :
+			startIndex := strings.Index(line, "!for")
+			endIndex := strings.Index(line, ":")
+			contents := strings.TrimSpace(line[startIndex+4 : endIndex])
+			// split by in
+			values := strings.Split(contents, " in ")
+			if len(values) != 2 {
+				return nil, fmt.Errorf("invalid for loop: %s", line)
+			}
+			variable := strings.TrimSpace(values[0])
+			parentToken = NewToken(LOOP, variable)
+			rangeString := strings.TrimSpace(values[1])
+			if strings.HasPrefix(rangeString, "[") {
+				// get the string between brackets
+				rangeString = strings.Trim(strings.TrimSpace(rangeString), "[]")
+			}
+			parentToken.Attachments = []*Token{NewToken(LOOP_RANGE, rangeString)}
+			tokens = append(tokens, parentToken)
+		} else if strings.HasPrefix(line, "- ") {
 			parts := strings.SplitN(line[2:], ":", 2)
 			parentToken = NewToken(LIST_ITEM, strings.TrimSpace(parts[0]))
 			if len(parts) > 1 && len(strings.TrimSpace(parts[1])) > 0 {
@@ -527,7 +618,22 @@ func Tokenize(lines []string, currentLevel int) ([]*Token, error) {
 
 func handleKeyValueString(parentToken *Token, value string) *Token {
 	// returns attachment if necessary
-	if strings.HasPrefix(strings.TrimSpace(value), "[") {
+	re := regexp.MustCompile(`(\$\{[^}]*\}|"[^"]*")|(\*)`)
+	matches := re.FindAllStringSubmatch(value, -1)
+	found := false
+	for _, match := range matches {
+		// match[2] contains the asterisks outside the excluded patterns
+		if match[2] != "" {
+			found = true
+			break
+		}
+	}
+	if found {
+		// get the word after *
+		parts := strings.SplitN(value, "*", 2)
+		attachment := NewToken(ALIAS, strings.TrimSpace(parts[1]))
+		return attachment
+	} else if strings.HasPrefix(strings.TrimSpace(value), "[") {
 		// get the string between brackets
 		contents := strings.Trim(strings.TrimSpace(value), "[]")
 		// split by ..
