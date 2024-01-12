@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Knetic/govaluate"
+	"gopkg.in/yaml.v3"
 	"math/rand"
 	"reflect"
 	"regexp"
@@ -506,7 +507,7 @@ func replaceWithMap(input string, anchors map[string]any) (string, error) {
 				expressionString = fmt.Sprintf("[%v]", k)
 			} else {
 				index := strings.Index(expressionString, k)
-				if index >= 0 && index+len(k) < len(expressionString) && expressionString[index+len(k)] == ' ' {
+				if index >= 0 && (index+len(k) < len(expressionString) && expressionString[index+len(k)] == ' ' || index+len(k) == len(expressionString)) {
 					expressionString = strings.Replace(expressionString, k, fmt.Sprintf("[%v]", k), -1)
 				}
 			}
@@ -738,6 +739,65 @@ func Unmarshal(data []byte, v interface{}) error {
 	return mapToStruct(parsedData, v)
 }
 
+// Marshal just returns the data as yaml
+func Marshal(v interface{}) ([]byte, error) {
+	noTagType := createModifiedTagType(reflect.TypeOf(v))
+	noTagValue := reflect.New(noTagType).Elem()
+	copyToModifiedTagStruct(reflect.ValueOf(v), noTagValue)
+	newVal := noTagValue.Interface()
+	return yaml.Marshal(newVal)
+}
+
+// createModifiedTagType creates a parallel type for the given type with modified tags.
+func createModifiedTagType(t reflect.Type) reflect.Type {
+	switch t.Kind() {
+	case reflect.Struct:
+		fields := make([]reflect.StructField, t.NumField())
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			tag := string(field.Tag)
+			modifiedTag := strings.Replace(tag, "yamlx", "yaml", -1)
+			fields[i] = reflect.StructField{
+				Name: field.Name,
+				Type: createModifiedTagType(field.Type),
+				Tag:  reflect.StructTag(modifiedTag),
+			}
+		}
+		return reflect.StructOf(fields)
+
+	case reflect.Slice:
+		elemType := createModifiedTagType(t.Elem())
+		return reflect.SliceOf(elemType)
+
+	default:
+		return t
+	}
+}
+
+// copyToModifiedTagStruct copies data from the original struct to the modified tag struct.
+func copyToModifiedTagStruct(src, dest reflect.Value) {
+	for i := 0; i < src.NumField(); i++ {
+		srcField := src.Field(i)
+		destField := dest.Field(i)
+
+		if srcField.Kind() == reflect.Struct {
+			newDestField := reflect.New(destField.Type()).Elem()
+			copyToModifiedTagStruct(srcField, newDestField)
+			destField.Set(newDestField)
+		} else if srcField.Kind() == reflect.Slice {
+			newSlice := reflect.MakeSlice(destField.Type(), srcField.Len(), srcField.Cap())
+			for j := 0; j < srcField.Len(); j++ {
+				newElem := reflect.New(destField.Type().Elem()).Elem()
+				copyToModifiedTagStruct(srcField.Index(j), newElem)
+				newSlice.Index(j).Set(newElem)
+			}
+			destField.Set(newSlice)
+		} else {
+			destField.Set(srcField)
+		}
+	}
+}
+
 // mapToStruct maps a generic map[string]any to a struct
 func mapToStruct(m map[string]any, s interface{}) error {
 	val := reflect.ValueOf(s)
@@ -754,7 +814,10 @@ func mapToStruct(m map[string]any, s interface{}) error {
 	for i := 0; i < val.NumField(); i++ {
 		field := typ.Field(i)
 		tag := field.Tag.Get("yamlx")
-		if tag == "" {
+		if tag != "" {
+			tagParts := strings.Split(tag, ",")
+			tag = tagParts[0] // Only use the first part of the tag
+		} else {
 			tag = field.Name
 		}
 

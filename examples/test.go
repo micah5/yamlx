@@ -5,43 +5,49 @@ import (
 	"github.com/micah5/yamlx"
 )
 
-type Person struct {
-	Name    string `yamlx:"first_name"`
-	Surname string `yamlx:"last_name"`
-	Age     int    `yamlx:"age"`
+type Server struct {
+	Name   string `yamlx:"name"`
+	Host   string `yamlx:"host"`
+	Port   int    `yamlx:"port"`
+	Engine string `yamlx:"engine,omitempty"`
 }
 
-type Organization struct {
-	Name   string   `yamlx:"name"`
-	People []Person `yamlx:"people"`
+type Config struct {
+	Servers []Server `yamlx:"servers"`
 }
 
 func main() {
 	data := `
-# Define variables
-variables:
-  environment: "production"
-  server_names: ["server1", "server2", "server3"]
+environments: &environments
+  - sandbox
+  - dev
+  - staging
+  - prod
 
-# Define a function
-functions:
-  generate_ip:
-    parameters: [name]
-    body: |
-      return "192.168.1." + str(ord(name[-1]))
+db_settings: &db_settings
+  engine:
+    latest: mysql8.2
+    stable: mysql5.7
 
-# Main configuration
-configuration:
-  servers:
-    - for_each: ${server_names}
-      server:
-        name: ${item}
-        ip: ${generate_ip(item)}
-        environment: ${environment}
-        status: "${if environment == 'production' then 'active' else 'inactive'}"
+subdomains: &subdomains [example, myapp]
+
+servers:
+  !for idx, name in *environments:
+    - name: *name
+      host: ${name}.${join(".", subdomains)}.com
+      port: 22
+    - name: ${name}-db
+      host: 192.168.1.${(idx + 1) * 100}
+      port: 3306
+      engine: ${name == "prod" ? db_settings.engine.stable : db_settings.engine.latest}
 `
-	var org Organization
-	yamlx.Unmarshal([]byte(data), &org)
+	var config Config
+	err := yamlx.Unmarshal([]byte(data), &config)
+	if err != nil {
+		panic(err)
+	}
 
-	fmt.Println(org)
+	// convert to yaml for demonstration purposes
+	yamlOutput, _ := yamlx.Marshal(config)
+	fmt.Println(string(yamlOutput))
 }
